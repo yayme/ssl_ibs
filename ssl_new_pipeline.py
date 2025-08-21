@@ -63,6 +63,9 @@ def time_warp_time_series(x, choice, sigma=0.2):
     
     return result
 
+# Implementation based on ssl-wearables generate_labels function
+# Reference: ssl-wearables/sslearning/data/data_loader.py lines 95-130
+# Each pretext task makes independent random decisions per signal
 def generate_pretext_labels_and_transform(x, cfg):
     batch_size = x.shape[0]
     labels = torch.zeros(batch_size, 4, dtype=torch.long)
