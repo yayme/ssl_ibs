@@ -586,3 +586,261 @@ def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, 
     plt.show()
     
     print("Training progress plot saved as 'ssl_training_progress.png'")
+
+
+def test_scratch_classifier(test_signals, signal_length, targets, epochs=50, 
+                           learning_rate=1e-3, batch_size=16, 
+                           results_save_path="scratch_classification_results.json"):
+    """
+    Train and test a classifier from scratch (without SSL pretraining) for downstream task
+    
+    Args:
+        test_signals: List of signals for classification
+        signal_length: Length of each signal
+        targets: List of target labels (0/1 for binary classification)
+        epochs: Number of training epochs
+        learning_rate: Learning rate for training
+        batch_size: Batch size for training
+        results_save_path: Path to save results
+    
+    Returns:
+        dict: Dictionary containing accuracy, f1_score, auc and other metrics
+    """
+    print("🏗️ Training Classifier from Scratch (No SSL Pretraining)")
+    print("="*70)
+    
+    # Determine number of channels from first signal
+    first_signal = np.array(test_signals[0])
+    if first_signal.ndim == 1:
+        n_channels = 1
+    else:
+        n_channels = min(first_signal.shape)
+    
+    print(f"Dataset: {len(test_signals)} signals, {n_channels} channels, length {signal_length}")
+    print(f"Training: {epochs} epochs, batch size {batch_size}, lr {learning_rate}")
+    
+    # Create dataset
+    dataset = SignalDataset(test_signals, signal_length, targets)
+    
+    # Split into train/validation (80/20)
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(
+        dataset, [train_size, val_size], 
+        generator=torch.Generator().manual_seed(42)
+    )
+    
+    print(f"Train set: {len(train_dataset)} samples")
+    print(f"Validation set: {len(val_dataset)} samples")
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    # Create a ResNet1D model from scratch for direct classification
+    from models.resnet1d import ResNet1D
+    
+    # Use same architecture as SSL feature extractor but with classification head
+    scratch_model = ResNet1D(
+        in_channels=n_channels,
+        n_classes=2,  # Binary classification for AHI >= 15
+        base_filters=64,
+        kernel_size=7,
+        stride=2,
+        groups=1,
+        n_block_per_stage=[2, 2, 2, 2],
+        downsample_gap=2,
+        increasefilter_gap=4
+    )
+    
+    print(f"Created ResNet1D model with {sum(p.numel() for p in scratch_model.parameters()):,} parameters")
+    print("All parameters are TRAINABLE 🔥")
+    
+    # Setup training
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    scratch_model = scratch_model.to(device)
+    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(scratch_model.parameters(), lr=learning_rate)
+    
+    # Training metrics tracking
+    train_losses = []
+    train_accs = []
+    val_losses = []
+    val_accs = []
+    
+    print(f"\nTraining on device: {device}")
+    print("Starting training from scratch...")
+    
+    # Training loop
+    for epoch in tqdm(range(epochs), desc="Training Epochs", unit="epoch"):
+        # Training phase
+        scratch_model.train()
+        train_loss = 0
+        train_correct = 0
+        train_total = 0
+        
+        for batch_x, batch_y in train_loader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            
+            optimizer.zero_grad()
+            outputs = scratch_model(batch_x)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            _, predicted = outputs.max(1)
+            train_total += batch_y.size(0)
+            train_correct += predicted.eq(batch_y).sum().item()
+        
+        # Validation phase
+        scratch_model.eval()
+        val_loss = 0
+        val_correct = 0
+        val_total = 0
+        
+        with torch.no_grad():
+            for batch_x, batch_y in val_loader:
+                batch_x = batch_x.to(device)
+                batch_y = batch_y.to(device)
+                
+                outputs = scratch_model(batch_x)
+                loss = criterion(outputs, batch_y)
+                
+                val_loss += loss.item()
+                _, predicted = outputs.max(1)
+                val_total += batch_y.size(0)
+                val_correct += predicted.eq(batch_y).sum().item()
+        
+        # Calculate epoch metrics
+        epoch_train_loss = train_loss / len(train_loader)
+        epoch_train_acc = train_correct / train_total
+        epoch_val_loss = val_loss / len(val_loader)
+        epoch_val_acc = val_correct / val_total
+        
+        train_losses.append(epoch_train_loss)
+        train_accs.append(epoch_train_acc)
+        val_losses.append(epoch_val_loss)
+        val_accs.append(epoch_val_acc)
+        
+        # Print progress every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch+1:3d}/{epochs}: "
+                  f"Train Loss: {epoch_train_loss:.4f}, Train Acc: {epoch_train_acc:.4f}, "
+                  f"Val Loss: {epoch_val_loss:.4f}, Val Acc: {epoch_val_acc:.4f}")
+    
+    # Final evaluation on validation set
+    scratch_model.eval()
+    all_preds = []
+    all_probs = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for batch_x, batch_y in val_loader:
+            batch_x = batch_x.to(device)
+            batch_y = batch_y.to(device)
+            
+            outputs = scratch_model(batch_x)
+            probs = torch.softmax(outputs, dim=1)
+            preds = outputs.argmax(1)
+            
+            all_preds.extend(preds.cpu().numpy())
+            all_probs.extend(probs[:, 1].cpu().numpy())  # Probability of class 1
+            all_targets.extend(batch_y.cpu().numpy())
+    
+    # Calculate final metrics
+    accuracy = accuracy_score(all_targets, all_preds)
+    f1 = f1_score(all_targets, all_preds)
+    auc = roc_auc_score(all_targets, all_probs)
+    
+    print(f"\n=== SCRATCH CLASSIFIER RESULTS ===")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"AUC: {auc:.4f}")
+    
+    # Plot results
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Training curves
+    epochs_range = range(1, len(train_losses) + 1)
+    
+    axes[0, 0].plot(epochs_range, train_losses, label='Train', linewidth=2)
+    axes[0, 0].plot(epochs_range, val_losses, label='Validation', linewidth=2)
+    axes[0, 0].set_title('Loss Curves (Scratch Training)', fontweight='bold')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    axes[0, 1].plot(epochs_range, train_accs, label='Train', linewidth=2)
+    axes[0, 1].plot(epochs_range, val_accs, label='Validation', linewidth=2)
+    axes[0, 1].set_title('Accuracy Curves (Scratch Training)', fontweight='bold')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # ROC curve
+    fpr, tpr, _ = roc_curve(all_targets, all_probs)
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}', linewidth=2)
+    axes[1, 0].plot([0, 1], [0, 1], 'k--', alpha=0.5)
+    axes[1, 0].set_title('ROC Curve (Scratch Training)', fontweight='bold')
+    axes[1, 0].set_xlabel('False Positive Rate')
+    axes[1, 0].set_ylabel('True Positive Rate')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # Confusion matrix
+    cm = confusion_matrix(all_targets, all_preds)
+    im = axes[1, 1].imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    axes[1, 1].set_title('Confusion Matrix (Scratch Training)', fontweight='bold')
+    axes[1, 1].set_xlabel('Predicted Label')
+    axes[1, 1].set_ylabel('True Label')
+    
+    # Add text annotations to confusion matrix
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            axes[1, 1].text(j, i, format(cm[i, j], 'd'),
+                           ha="center", va="center",
+                           color="white" if cm[i, j] > thresh else "black",
+                           fontweight='bold')
+    
+    # Add colorbar
+    plt.colorbar(im, ax=axes[1, 1])
+    
+    plt.tight_layout()
+    plt.savefig('scratch_classifier_results.png', dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    # Save results
+    results = {
+        'method': 'scratch_classifier',
+        'accuracy': accuracy,
+        'f1_score': f1,
+        'auc': auc,
+        'confusion_matrix': cm.tolist(),
+        'training_config': {
+            'epochs': epochs,
+            'learning_rate': learning_rate,
+            'batch_size': batch_size,
+            'train_samples': len(train_dataset),
+            'val_samples': len(val_dataset)
+        },
+        'training_curves': {
+            'train_losses': train_losses,
+            'train_accs': train_accs,
+            'val_losses': val_losses,
+            'val_accs': val_accs
+        }
+    }
+    
+    with open(results_save_path, 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    print(f"Results saved to: {results_save_path}")
+    print("Plot saved as 'scratch_classifier_results.png'")
+    
+    return results
