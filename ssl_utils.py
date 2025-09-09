@@ -257,7 +257,9 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     plt.grid(True)
     
     plt.tight_layout()
-    plt.savefig('ssl_training_curves.png', dpi=150, bbox_inches='tight')
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    ssl_training_curves_path = f'ssl_training_curves_{unique_id}.png'
+    plt.savefig(ssl_training_curves_path, dpi=150, bbox_inches='tight')
     plt.show()
     
     return model_save_path
@@ -470,7 +472,9 @@ def test_ssl(test_signals, signal_length, targets, model_path,
                            color="white" if cm[i, j] > thresh else "black")
     
     plt.tight_layout()
-    plt.savefig('downstream_results.png', dpi=150, bbox_inches='tight')
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    downstream_results_path = f'downstream_results_{unique_id}.png'
+    plt.savefig(downstream_results_path, dpi=150, bbox_inches='tight')
     plt.show()
     
     # Save results
@@ -486,11 +490,11 @@ def test_ssl(test_signals, signal_length, targets, model_path,
         }
     }
     
-    with open(results_save_path, 'w') as f:
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    results_save_path_unique = results_save_path.replace('.json', f'_{unique_id}.json')
+    with open(results_save_path_unique, 'w') as f:
         json.dump(results, f, indent=2)
-    
-    print(f"Results saved to: {results_save_path}")
-    
+    print(f"Results saved to: {results_save_path_unique}")
     return results
 
 def compute_multitask_loss_verbose(outputs, labels, task_config, active_tasks):
@@ -582,10 +586,11 @@ def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, 
                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.5))
     
     plt.tight_layout()
-    plt.savefig('ssl_training_progress.png', dpi=150, bbox_inches='tight')
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    ssl_training_progress_path = f'ssl_training_progress_{unique_id}.png'
+    plt.savefig(ssl_training_progress_path, dpi=150, bbox_inches='tight')
     plt.show()
-    
-    print("Training progress plot saved as 'ssl_training_progress.png'")
+    print(f"Training progress plot saved as '{ssl_training_progress_path}'")
 
 
 def test_scratch_classifier(test_signals, signal_length, targets, epochs=50, 
@@ -812,7 +817,9 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
     plt.colorbar(im, ax=axes[1, 1])
     
     plt.tight_layout()
-    plt.savefig('scratch_classifier_results.png', dpi=150, bbox_inches='tight')
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    scratch_classifier_results_path = f'scratch_classifier_results_{unique_id}.png'
+    plt.savefig(scratch_classifier_results_path, dpi=150, bbox_inches='tight')
     plt.show()
     
     # Save results
@@ -837,10 +844,10 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
         }
     }
     
-    with open(results_save_path, 'w') as f:
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    results_save_path_unique = results_save_path.replace('.json', f'_{unique_id}.json')
+    with open(results_save_path_unique, 'w') as f:
         json.dump(results, f, indent=2)
-    
-    print(f"Results saved to: {results_save_path}")
-    print("Plot saved as 'scratch_classifier_results.png'")
-    
+    print(f"Results saved to: {results_save_path_unique}")
+    print(f"Plot saved as '{scratch_classifier_results_path}'")
     return results
