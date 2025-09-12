@@ -643,20 +643,9 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Create a ResNet1D model from scratch for direct classification
-    from models.resnet1d import ResNet1D
-    
-    # Use same architecture as SSL feature extractor but with classification head
-    scratch_model = ResNet1D(
-        in_channels=n_channels,
-        n_classes=2,  # Binary classification for AHI >= 15
-        base_filters=64,
-        kernel_size=7,
-        stride=2,
-        groups=1,
-        n_block_per_stage=[2, 2, 2, 2],
-        downsample_gap=2,
-        increasefilter_gap=4
-    )
+    from models.resnet1d import resnet18_1d
+    # Use the resnet18_1d factory to create the model with correct arguments
+    scratch_model = resnet18_1d(in_channels=n_channels, num_classes=2)
     
     print(f"Created ResNet1D model with {sum(p.numel() for p in scratch_model.parameters()):,} parameters")
     print("All parameters are TRAINABLE 🔥")
