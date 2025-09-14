@@ -840,3 +840,263 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
     print(f"Results saved to: {results_save_path_unique}")
     print(f"Plot saved as '{scratch_classifier_results_path}'")
     return results
+
+
+def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
+                epochs=50, learning_rate=1e-3, batch_size=16, 
+                results_save_path="tl_classification_results.json"):
+    """
+    Args:
+        test_signals: List of signal arrays for classification
+        signal_length: Length of each signal
+        targets: List of binary targets (0 or 1 for AHI classification)
+        pretrained_model_path: Path to pretrained model (.mdl file)
+        epochs: Number of training epochs
+        learning_rate: Learning rate for fine-tuning
+        batch_size: Batch size for training
+        results_save_path: Path to save results JSON
+    
+    Returns:
+        dict: Results containing accuracy, f1_score, auc, and other metrics
+    """
+    from torch.utils.data import TensorDataset
+    
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    
+    print(f"🔧 Transfer Learning Activity")
+    print(f"Device: {device}")
+    print(f"Loading model: {pretrained_model_path}")
+    
+    # Load pretrained model
+    checkpoint = torch.load(pretrained_model_path, map_location=device)
+    print("✅ Loaded pretrained weights")
+    
+    class TL(nn.Module):
+        """Transfer learning with linear input conversion"""
+        def __init__(self, pretrained_model, input_length, n_classes=2):
+            super().__init__()
+            
+            # Linear layer to convert (1, input_length) -> (3*input_length,)
+            self.input_converter = nn.Linear(input_length, 3 * input_length)
+            
+            # Pretrained feature extractor (frozen)
+            self.feature_extractor = pretrained_model
+            for param in self.feature_extractor.parameters():
+                param.requires_grad = False
+            
+            # Get feature dimension by test forward pass
+            with torch.no_grad():
+                test_input = torch.randn(1, 3, input_length)
+                features = self.feature_extractor(test_input)
+                if isinstance(features, (dict, list, tuple)):
+                    features = list(features.values())[0] if isinstance(features, dict) else features[0]
+                feature_dim = features.view(1, -1).shape[1]
+            
+            # Classifier head
+            self.classifier = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Linear(feature_dim, n_classes)
+            )
+            
+            print(f"📐 Input: ({input_length},) -> Linear -> (3, {input_length}) -> Features: {feature_dim} -> Classes: {n_classes}")
+            print(f"❄️ Frozen parameters: {sum(p.numel() for p in self.feature_extractor.parameters()):,}")
+            print(f"🔥 Trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
+            self.classifier = nn.Sequential(
+                nn.Dropout(0.5),
+                nn.Linear(feature_dim, n_classes)
+            )
+            
+            print(f"� Input: ({input_length},) -> Linear -> (3, {input_length}) -> Features: {feature_dim} -> Classes: {n_classes}")
+            print(f"❄️ Frozen pretrained parameters: {sum(p.numel() for p in self.feature_extractor.parameters()):,}")
+            print(f"🔥 Trainable parameters: {sum(p.numel() for p in self.parameters() if p.requires_grad):,}")
+        
+        def forward(self, x):
+            # x shape: (batch, 1, length)
+            batch_size, channels, length = x.shape
+            
+            # Flatten and convert: (batch, length) -> (batch, 3*length)
+            x_flat = x.squeeze(1)  # (batch, length)
+            x_converted = self.input_converter(x_flat)  # (batch, 3*length)
+            
+            # Reshape to (batch, 3, length)
+            x_reshaped = x_converted.view(batch_size, 3, length)
+            
+            # Extract features
+            features = self.feature_extractor(x_reshaped)
+            if isinstance(features, (dict, list, tuple)):
+                features = list(features.values())[0] if isinstance(features, dict) else features[0]
+            
+            # Flatten and classify
+            features = features.view(batch_size, -1)
+            output = self.classifier(features)
+            return output
+    
+    # Prepare data
+    X = torch.stack([torch.FloatTensor(signal) for signal in test_signals])
+    y = torch.LongTensor(targets)
+    
+    # Train/validation split (80/20)
+    train_size = int(0.8 * len(X))
+    X_train, X_val = X[:train_size], X[train_size:]
+    y_train, y_val = y[:train_size], y[train_size:]
+    
+    train_dataset = TensorDataset(X_train, y_train)
+    val_dataset = TensorDataset(X_val, y_val)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    print(f"📊 Data: {len(X)} total, {len(X_train)} train, {len(X_val)} val")
+    print(f"Signal shape: {X.shape}, Target distribution: {np.bincount(targets)}")
+    
+    # Create model
+    from models.resnet1d import resnet18_1d
+    
+    # Create base model and remove final classifier
+    base_model = resnet18_1d(in_channels=3, num_classes=1000)
+    base_model = nn.Sequential(*list(base_model.children())[:-1])  # Remove fc layer
+    
+    # Load pretrained weights
+    if isinstance(checkpoint, dict):
+        state_dict = checkpoint.get('state_dict', checkpoint.get('model_state_dict', checkpoint))
+    else:
+        state_dict = checkpoint
+    base_model.load_state_dict(state_dict, strict=False)
+    
+    model = TL(base_model, signal_length, n_classes=2)
+    model = model.to(device)
+    
+    # Training setup
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    
+    train_losses, train_accs, val_losses, val_accs = [], [], [], []
+    
+    print(f"🚀 Training for {epochs} epochs...")
+    
+    # Training loop
+    for epoch in tqdm(range(epochs), desc="Training"):
+        # Train
+        model.train()
+        train_loss = train_correct = train_total = 0
+        
+        for batch_X, batch_y in train_loader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+            
+            optimizer.zero_grad()
+            outputs = model(batch_X)
+            loss = criterion(outputs, batch_y)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            _, predicted = outputs.max(1)
+            train_total += batch_y.size(0)
+            train_correct += predicted.eq(batch_y).sum().item()
+        
+        # Validate
+        model.eval()
+        val_loss = val_correct = val_total = 0
+        
+        with torch.no_grad():
+            for batch_X, batch_y in val_loader:
+                batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+                outputs = model(batch_X)
+                loss = criterion(outputs, batch_y)
+                
+                val_loss += loss.item()
+                _, predicted = outputs.max(1)
+                val_total += batch_y.size(0)
+                val_correct += predicted.eq(batch_y).sum().item()
+        
+        # Store metrics
+        train_losses.append(train_loss / len(train_loader))
+        train_accs.append(train_correct / train_total)
+        val_losses.append(val_loss / len(val_loader))
+        val_accs.append(val_correct / val_total)
+        
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch+1}: Train Acc: {train_accs[-1]:.4f}, Val Acc: {val_accs[-1]:.4f}")
+    
+    # Final evaluation
+    model.eval()
+    all_preds, all_probs, all_targets = [], [], []
+    
+    with torch.no_grad():
+        for batch_X, batch_y in val_loader:
+            batch_X, batch_y = batch_X.to(device), batch_y.to(device)
+            outputs = model(batch_X)
+            probs = torch.softmax(outputs, dim=1)
+            
+            all_preds.extend(outputs.argmax(1).cpu().numpy())
+            all_probs.extend(probs[:, 1].cpu().numpy())
+            all_targets.extend(batch_y.cpu().numpy())
+    
+    # Calculate metrics
+    accuracy = accuracy_score(all_targets, all_preds)
+    f1 = f1_score(all_targets, all_preds)
+    auc = roc_auc_score(all_targets, all_probs)
+    
+    print(f"\n🎯 Results: Accuracy: {accuracy:.4f}, F1: {f1:.4f}, AUC: {auc:.4f}")
+    
+    # Plot results (same structure as other functions)
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Training curves
+    axes[0, 0].plot(train_losses, label='Train', linewidth=2)
+    axes[0, 0].plot(val_losses, label='Val', linewidth=2)
+    axes[0, 0].set_title('Loss (Transfer Learning)')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
+    
+    axes[0, 1].plot(train_accs, label='Train', linewidth=2)
+    axes[0, 1].plot(val_accs, label='Val', linewidth=2)
+    axes[0, 1].set_title('Accuracy (Transfer Learning)')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    
+    # ROC curve
+    fpr, tpr, _ = roc_curve(all_targets, all_probs)
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}', linewidth=2)
+    axes[1, 0].plot([0, 1], [0, 1], 'k--', alpha=0.5)
+    axes[1, 0].set_title('ROC Curve')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    
+    # Confusion matrix
+    cm = confusion_matrix(all_targets, all_preds)
+    axes[1, 1].imshow(cm, cmap='Blues')
+    axes[1, 1].set_title('Confusion Matrix')
+    for i in range(2):
+        for j in range(2):
+            axes[1, 1].text(j, i, str(cm[i, j]), ha='center', va='center')
+    
+    plt.tight_layout()
+    plot_filename = f"tl_results_{timestamp}.png"
+    plt.savefig(plot_filename, dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    # Save results
+    results = {
+        'method': 'transfer_learning',
+        'accuracy': accuracy,
+        'f1_score': f1,
+        'auc': auc,
+        'confusion_matrix': cm.tolist(),
+        'model_config': {
+            'pretrained_model_path': pretrained_model_path,
+            'epochs': epochs,
+            'learning_rate': learning_rate,
+            'batch_size': batch_size,
+            'signal_length': signal_length
+        }
+    }
+    
+    results_filename = results_save_path.replace('.json', f'_{timestamp}.json')
+    with open(results_filename, 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    print(f"💾 Results saved: {results_filename}")
+    print(f"📊 Plot saved: {plot_filename}")
+    
+    return results

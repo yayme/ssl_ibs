@@ -1,0 +1,23 @@
+{
+  "method": "transfer_learning",
+  "accuracy": 0.6477595008508225,
+  "f1_score": 0.7272727272727273,
+  "auc": 0.6616305441535832,
+  "confusion_matrix": [
+    [
+      314,
+      179
+    ],
+    [
+      442,
+      828
+    ]
+  ],
+  "model_config": {
+    "pretrained_model_path": "model_check_point/mtl_5_best.mdl",
+    "epochs": 40,
+    "learning_rate": 0.001,
+    "batch_size": 16,
+    "signal_length": 1000
+  }
+}
