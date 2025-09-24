@@ -217,7 +217,7 @@ from ssl_utils import train_ssl
 model_path = train_ssl(
     signals=truncated_signals,
     signal_length=min_length,
-    epochs=200,  
+    epochs=20,  
     learning_rate=1e-4,
     batch_size=16,  # Smaller batch size for limited data
     model_save_path="spo2_ssl_model_500length.pth"
@@ -298,7 +298,7 @@ results = test_ssl(
     signal_length=min_downstream_length,
     targets=downstream_targets,
     model_path=model_path,  # Use the newly trained model path
-    epochs=200,
+    epochs=20,
     learning_rate=1e-3,
     batch_size=16,
     results_save_path="ahi_classification_results_500length.json"
