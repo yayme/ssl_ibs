@@ -59,7 +59,7 @@ class SignalDataset(Dataset):
         return signal
 
 def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=32, 
-              model_save_path="ssl_model.pth", config_path="config.json", device=None):
+              model_name="ssl_model", config_path="config.json", device=None):
     """
     Train SSL model on list of time series signals
     
@@ -218,14 +218,12 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     print(f"Final metrics: Loss={training_losses[-1]:.4f}, Acc={training_accs[-1]:.4f}")
     
     # Plot training progress
-    plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks)
+    plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks, model_name, timestamp)
     
     # Save model with timestamp
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = model_save_path.split('.')[0]
-    extension = model_save_path.split('.')[-1]
-    timestamped_path = f"{base_name}_{timestamp}.{extension}"
+    timestamped_path = f"{model_name}_{timestamp}.pth"
     
     torch.save({
         'model_state_dict': model.state_dict(),
@@ -246,8 +244,8 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     print(f"SSL model saved to: {timestamped_path}")
     print(f"Training completed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # Return the timestamped path instead of original
-    model_save_path = timestamped_path
+    # Return the timestamped path
+    final_model_path = timestamped_path
     
     # Plot training curves
     plt.figure(figsize=(12, 4))
@@ -267,12 +265,11 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     plt.grid(True)
     
     plt.tight_layout()
-    unique_id = time.strftime("%Y%m%d_%H%M%S")
-    ssl_training_curves_path = f'ssl_training_curves_{unique_id}.png'
+    ssl_training_curves_path = f'{model_name}_ssl_training_curves_{timestamp}.png'
     plt.savefig(ssl_training_curves_path, dpi=150, bbox_inches='tight')
     plt.show()
     
-    return model_save_path
+    return final_model_path
 
 def test_ssl(test_signals, signal_length, targets, model_path, 
              epochs=30, learning_rate=1e-3, batch_size=32,
@@ -549,7 +546,7 @@ def compute_multitask_loss_verbose(outputs, labels, task_config, active_tasks):
     
     return total_loss, total_acc, task_metrics
 
-def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks):
+def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks, model_name="ssl_model", timestamp=None):
     """Plot comprehensive SSL training progress"""
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     
@@ -604,8 +601,9 @@ def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, 
                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.5))
     
     plt.tight_layout()
-    unique_id = time.strftime("%Y%m%d_%H%M%S")
-    ssl_training_progress_path = f'ssl_training_progress_{unique_id}.png'
+    if timestamp is None:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+    ssl_training_progress_path = f'{model_name}_ssl_training_progress_{timestamp}.png'
     plt.savefig(ssl_training_progress_path, dpi=150, bbox_inches='tight')
     plt.show()
     print(f"Training progress plot saved as '{ssl_training_progress_path}'")
