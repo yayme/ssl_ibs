@@ -59,7 +59,7 @@ class SignalDataset(Dataset):
         return signal
 
 def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=32, 
-              model_save_path="ssl_model.pth", config_path="config.json"):
+              model_save_path="ssl_model.pth", config_path="config.json", device=None):
     """
     Train SSL model on list of time series signals
     
@@ -111,6 +111,11 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     # PyTorch DataLoader is used to load data in batches, allowing for efficient training
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
+    # Set device
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Training on device: {device}")
+    
     # Create model
     # Extract only the task names that are enabled (excluding positive_ratio which is not a task)
     task_names = ['time_reversal', 'scale', 'permutation', 'time_warped']
@@ -122,7 +127,7 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
         in_channels=n_channels,
         n_classes_per_task=2,
         tasks=active_tasks
-    )
+    ).to(device)
     
     print(f"Training SSL model with tasks: {active_tasks}")
     print(f"Dataset: {len(signals)} signals, {n_channels} channels, length {signal_length}")
@@ -155,8 +160,13 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
             if isinstance(x, list):
                 x = x[0]
             
+            # Move data to device
+            x = x.to(device)
+            
             # Generate pretext labels and transform data
             x_transformed, labels = generate_pretext_labels_and_transform(x, ssl_config)
+            x_transformed = x_transformed.to(device)
+            labels = labels.to(device)
             
             # Forward pass
             outputs = model(x_transformed)
@@ -266,7 +276,7 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
 
 def test_ssl(test_signals, signal_length, targets, model_path, 
              epochs=30, learning_rate=1e-3, batch_size=32,
-             results_save_path="downstream_results.json"):
+             results_save_path="downstream_results.json", device=None):
     """
     Test SSL model on downstream classification task
     
@@ -286,8 +296,13 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     print(f"Loading SSL model from: {model_path}")
     
+    # Set device
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Testing on device: {device}")
+    
     # Load pre-trained model
-    checkpoint = torch.load(model_path, map_location='cpu')
+    checkpoint = torch.load(model_path, map_location=device)
     model_config = checkpoint['model_config']
     
     # Recreate SSL model
@@ -315,7 +330,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Create downstream classifier
-    downstream_model = DownstreamClassifier(ssl_model.feature_extractor, n_classes=2)
+    downstream_model = DownstreamClassifier(ssl_model.feature_extractor, n_classes=2).to(device)
     
     # Training
     optimizer = optim.Adam(downstream_model.classifier.parameters(), lr=learning_rate)
@@ -344,6 +359,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
                          leave=False, unit="batch")
         
         for x, y in train_pbar:
+            x, y = x.to(device), y.to(device)
             outputs = downstream_model(x)
             loss = criterion(outputs, y)
             
@@ -372,6 +388,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
         
         with torch.no_grad():
             for x, y in val_pbar:
+                x, y = x.to(device), y.to(device)
                 outputs = downstream_model(x)
                 loss = criterion(outputs, y)
                 val_loss += loss.item()
@@ -408,6 +425,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     with torch.no_grad():
         for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
             outputs = downstream_model(x)
             probs = torch.softmax(outputs, dim=1)
             preds = outputs.argmax(1)
@@ -595,7 +613,7 @@ def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, 
 
 def test_scratch_classifier(test_signals, signal_length, targets, epochs=50, 
                            learning_rate=1e-3, batch_size=16, 
-                           results_save_path="scratch_classification_results.json"):
+                           results_save_path="scratch_classification_results.json", device=None):
     """
     Train and test a classifier from scratch (without SSL pretraining) for downstream task
     
@@ -651,7 +669,8 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
     print("All parameters are TRAINABLE 🔥")
     
     # Setup training
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     scratch_model = scratch_model.to(device)
     
     criterion = nn.CrossEntropyLoss()
@@ -844,7 +863,7 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
 
 def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
                 epochs=50, learning_rate=1e-3, batch_size=16, 
-                results_save_path="tl_classification_results.json"):
+                results_save_path="tl_classification_results.json", device=None):
     """
     Args:
         test_signals: List of signal arrays for classification
@@ -861,7 +880,8 @@ def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
     """
     from torch.utils.data import TensorDataset
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     
     print(f"🔧 Transfer Learning Activity")

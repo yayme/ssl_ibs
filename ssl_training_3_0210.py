@@ -261,17 +261,16 @@ def main():
         print(f"Signal shape: {signals[0].shape}")
         
         try:
-            model_path, training_results = train_ssl(
+            model_path = train_ssl(
                 signals, 
-                input_dim=input_dim,
+                signal_length=1000,
                 epochs=200,
-                task_name=task_name,
+                model_save_path=f"{task_name}_ssl_model.pth",
                 device=device
             )
             
             results[task_name] = {
                 'model_path': model_path,
-                'training_results': training_results,
                 'num_segments': len(processed_data),
                 'input_dim': input_dim
             }
@@ -284,7 +283,7 @@ def main():
     
     print(f"\n=== Training Summary ===")
     for task_name, result in results.items():
-        print(f"{task_name}: {result['num_segments']} segments, {result['input_dim']}D input")
+        print(f"{task_name}: {result['num_segments']} segments, {result['input_dim']}D input, model saved to: {result['model_path']}")
 
 if __name__ == "__main__":
     main()
