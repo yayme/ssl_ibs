@@ -6,11 +6,11 @@ from ssl_utils import train_ssl
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device: {device}")
-if torch.cuda.is_available():
-    print(f"GPU: {torch.cuda.get_device_name(0)}")
-    print(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') 
+# option: cuda:0 cuda:1 cuda:2
+print(f'total GPU count: {torch.cuda.device_count()}')
+print(f'current working GPU index: {device.index}')
+
 
 class SMCDataProcessor:
     def __init__(self, base_directory):

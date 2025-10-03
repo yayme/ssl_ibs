@@ -263,7 +263,7 @@ def main():
             model_path = train_ssl(
                 signals, 
                 signal_length=1000,
-                epochs=1,
+                epochs=200,
                 model_save_path=f"{task_name}_ssl_model.pth",
                 device=device
             )
