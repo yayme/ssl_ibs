@@ -217,12 +217,14 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     print(f"\nSSL Training Complete! Total time: {total_time:.1f}s")
     print(f"Final metrics: Loss={training_losses[-1]:.4f}, Acc={training_accs[-1]:.4f}")
     
+    # Generate timestamp for file naming
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
     # Plot training progress
     plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks, model_name, timestamp)
     
     # Save model with timestamp
-    from datetime import datetime
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     timestamped_path = f"{model_name}_{timestamp}.pth"
     
     torch.save({
