@@ -232,7 +232,8 @@ def main():
     
     tasks = {
     
-        'Task3': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_only'}
+        'Task6': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_ring'},
+        'Task7': {'features': ['SpO2', 'HR', 'DC_R', 'acc_power'], 'data': 'watch_only'}
       
     }
     
@@ -265,7 +266,7 @@ def main():
                 signals, 
                 signal_length=1000,
                 epochs=200,
-                model_save_path=f"{task_name}_ssl_model.pth",
+                model_name=task_name,
                 device=device
             )
             

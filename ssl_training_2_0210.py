@@ -233,7 +233,7 @@ def main():
     
     tasks = {
   
-        'Task2': {'features': ['SpO2', 'HR', 'DC_R'], 'data': 'watch_only'}
+        'Task5': {'features': ['SpO2', 'HR', 'DC_R'], 'data': 'watch_ring'}
  
     }
     
