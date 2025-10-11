@@ -232,8 +232,9 @@ def main():
     print(f"Watch labeled: {len(watch_labeled)} samples")
     
     tasks = {
-  
-        'Task5': {'features': ['SpO2', 'HR', 'DC_R'], 'data': 'watch_ring'}
+        'Task13': {'features': ['SpO2'], 'data': 'watch_ring'},
+        'Task14': {'features': ['HR'], 'data': 'watch_ring'},
+        'Task12': {'features': ['acc_power'], 'data': 'watch_only'}
  
     }
     

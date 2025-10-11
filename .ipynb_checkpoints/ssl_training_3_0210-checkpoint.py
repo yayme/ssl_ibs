@@ -232,8 +232,9 @@ def main():
     
     tasks = {
     
-        'Task6': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_ring'},
-        'Task7': {'features': ['SpO2', 'HR', 'DC_R', 'acc_power'], 'data': 'watch_only'}
+        'Task15': {'features': ['DC_R'], 'data': 'watch_ring'}
+      
+
       
     }
     
