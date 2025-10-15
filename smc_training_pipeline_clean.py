@@ -238,7 +238,7 @@ def main():
         'Task5': {'features': ['SpO2', 'HR', 'DC_R'], 'data': 'watch_ring'},
         'Task6': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_ring'},
         'Task7': {'features': ['SpO2', 'HR', 'DC_R', 'acc_power'], 'data': 'watch_only'},
-        'Task8': {'features': ['SpO2', 'HR', 'DC_R', 'acc_power'], 'data': 'watch_ring'},
+        'Task8': {'features': ['SpO2', 'HR', 'DC_R', 'acc_power'], 'data': 'watch_ring'}
     }
     
     results = {}

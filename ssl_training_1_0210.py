@@ -231,9 +231,8 @@ def main():
     print(f"Watch labeled: {len(watch_labeled)} samples")
     
     tasks = {
-        'Task9': {'features': ['SpO2'], 'data': 'watch_only'},
-        'Task10': {'features': ['HR'], 'data': 'watch_only'},
-        'Task11': {'features': ['DC_R'], 'data': 'watch_only'}
+
+        'Task8-epoch1000': {'features': ['SpO2', 'HR', 'DC_R', 'acc_power'], 'data': 'watch_ring'}
     
     }
     
@@ -265,7 +264,7 @@ def main():
             model_path = train_ssl(
                 signals, 
                 signal_length=1000,
-                epochs=200,
+                epochs=1000,
                 model_name=task_name,
                 device=device
             )
