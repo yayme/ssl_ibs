@@ -232,7 +232,7 @@ def main():
     
     tasks = {
 
-        'Task3-epoch1000': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_only'}
+        'Task3-epoch2000': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_only'}
       
     }
     
@@ -264,7 +264,7 @@ def main():
             model_path = train_ssl(
                 signals, 
                 signal_length=1000,
-                epochs=1000,
+                epochs=2000,
                 model_name=task_name,
                 device=device
             )
