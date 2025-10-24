@@ -465,7 +465,8 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     # ROC curve
     fpr, tpr, _ = roc_curve(all_targets, all_probs)
-    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}')
+    # axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}')
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}, accuracy= {accuracy:.3f}, f1score= {f1: .3f}')
     axes[1, 0].plot([0, 1], [0, 1], 'k--')
     axes[1, 0].set_title('ROC Curve')
     axes[1, 0].set_xlabel('False Positive Rate')

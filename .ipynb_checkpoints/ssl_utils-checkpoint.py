@@ -59,7 +59,7 @@ class SignalDataset(Dataset):
         return signal
 
 def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=32, 
-              model_save_path="ssl_model.pth", config_path="config.json"):
+              model_name="ssl_model", config_path="config.json", device=None):
     """
     Train SSL model on list of time series signals
     
@@ -111,6 +111,11 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     # PyTorch DataLoader is used to load data in batches, allowing for efficient training
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     
+    # Set device
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Training on device: {device}")
+    
     # Create model
     # Extract only the task names that are enabled (excluding positive_ratio which is not a task)
     task_names = ['time_reversal', 'scale', 'permutation', 'time_warped']
@@ -122,7 +127,7 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
         in_channels=n_channels,
         n_classes_per_task=2,
         tasks=active_tasks
-    )
+    ).to(device)
     
     print(f"Training SSL model with tasks: {active_tasks}")
     print(f"Dataset: {len(signals)} signals, {n_channels} channels, length {signal_length}")
@@ -155,8 +160,13 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
             if isinstance(x, list):
                 x = x[0]
             
+            # Move data to device
+            x = x.to(device)
+            
             # Generate pretext labels and transform data
             x_transformed, labels = generate_pretext_labels_and_transform(x, ssl_config)
+            x_transformed = x_transformed.to(device)
+            labels = labels.to(device)
             
             # Forward pass
             outputs = model(x_transformed)
@@ -207,15 +217,15 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     print(f"\nSSL Training Complete! Total time: {total_time:.1f}s")
     print(f"Final metrics: Loss={training_losses[-1]:.4f}, Acc={training_accs[-1]:.4f}")
     
-    # Plot training progress
-    plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks)
-    
-    # Save model with timestamp
+    # Generate timestamp for file naming
     from datetime import datetime
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_name = model_save_path.split('.')[0]
-    extension = model_save_path.split('.')[-1]
-    timestamped_path = f"{base_name}_{timestamp}.{extension}"
+    
+    # Plot training progress
+    plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks, model_name, timestamp)
+    
+    # Save model with timestamp
+    timestamped_path = f"{model_name}_{timestamp}.pth"
     
     torch.save({
         'model_state_dict': model.state_dict(),
@@ -236,8 +246,8 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     print(f"SSL model saved to: {timestamped_path}")
     print(f"Training completed on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # Return the timestamped path instead of original
-    model_save_path = timestamped_path
+    # Return the timestamped path
+    final_model_path = timestamped_path
     
     # Plot training curves
     plt.figure(figsize=(12, 4))
@@ -257,16 +267,15 @@ def train_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=
     plt.grid(True)
     
     plt.tight_layout()
-    unique_id = time.strftime("%Y%m%d_%H%M%S")
-    ssl_training_curves_path = f'ssl_training_curves_{unique_id}.png'
+    ssl_training_curves_path = f'{model_name}_ssl_training_curves_{timestamp}.png'
     plt.savefig(ssl_training_curves_path, dpi=150, bbox_inches='tight')
     plt.show()
     
-    return model_save_path
+    return final_model_path
 
 def test_ssl(test_signals, signal_length, targets, model_path, 
              epochs=30, learning_rate=1e-3, batch_size=32,
-             results_save_path="downstream_results.json"):
+             results_save_path="downstream_results.json", device=None):
     """
     Test SSL model on downstream classification task
     
@@ -286,8 +295,13 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     print(f"Loading SSL model from: {model_path}")
     
+    # Set device
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Testing on device: {device}")
+    
     # Load pre-trained model
-    checkpoint = torch.load(model_path, map_location='cpu')
+    checkpoint = torch.load(model_path, map_location=device)
     model_config = checkpoint['model_config']
     
     # Recreate SSL model
@@ -315,7 +329,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
     
     # Create downstream classifier
-    downstream_model = DownstreamClassifier(ssl_model.feature_extractor, n_classes=2)
+    downstream_model = DownstreamClassifier(ssl_model.feature_extractor, n_classes=2).to(device)
     
     # Training
     optimizer = optim.Adam(downstream_model.classifier.parameters(), lr=learning_rate)
@@ -344,6 +358,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
                          leave=False, unit="batch")
         
         for x, y in train_pbar:
+            x, y = x.to(device), y.to(device)
             outputs = downstream_model(x)
             loss = criterion(outputs, y)
             
@@ -372,6 +387,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
         
         with torch.no_grad():
             for x, y in val_pbar:
+                x, y = x.to(device), y.to(device)
                 outputs = downstream_model(x)
                 loss = criterion(outputs, y)
                 val_loss += loss.item()
@@ -408,6 +424,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     with torch.no_grad():
         for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
             outputs = downstream_model(x)
             probs = torch.softmax(outputs, dim=1)
             preds = outputs.argmax(1)
@@ -448,7 +465,8 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     # ROC curve
     fpr, tpr, _ = roc_curve(all_targets, all_probs)
-    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}')
+    # axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}')
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}, accuracy= {accuracy:.3f}, f1score= {f1: .3f}')
     axes[1, 0].plot([0, 1], [0, 1], 'k--')
     axes[1, 0].set_title('ROC Curve')
     axes[1, 0].set_xlabel('False Positive Rate')
@@ -531,7 +549,7 @@ def compute_multitask_loss_verbose(outputs, labels, task_config, active_tasks):
     
     return total_loss, total_acc, task_metrics
 
-def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks):
+def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks, model_name="ssl_model", timestamp=None):
     """Plot comprehensive SSL training progress"""
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     
@@ -586,8 +604,9 @@ def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, 
                    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.5))
     
     plt.tight_layout()
-    unique_id = time.strftime("%Y%m%d_%H%M%S")
-    ssl_training_progress_path = f'ssl_training_progress_{unique_id}.png'
+    if timestamp is None:
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+    ssl_training_progress_path = f'{model_name}_ssl_training_progress_{timestamp}.png'
     plt.savefig(ssl_training_progress_path, dpi=150, bbox_inches='tight')
     plt.show()
     print(f"Training progress plot saved as '{ssl_training_progress_path}'")
@@ -595,7 +614,7 @@ def plot_ssl_training_progress(training_losses, training_accs, task_accuracies, 
 
 def test_scratch_classifier(test_signals, signal_length, targets, epochs=50, 
                            learning_rate=1e-3, batch_size=16, 
-                           results_save_path="scratch_classification_results.json"):
+                           results_save_path="scratch_classification_results.json", device=None):
     """
     Train and test a classifier from scratch (without SSL pretraining) for downstream task
     
@@ -651,7 +670,8 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
     print("All parameters are TRAINABLE 🔥")
     
     # Setup training
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     scratch_model = scratch_model.to(device)
     
     criterion = nn.CrossEntropyLoss()
@@ -844,7 +864,7 @@ def test_scratch_classifier(test_signals, signal_length, targets, epochs=50,
 
 def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
                 epochs=50, learning_rate=1e-3, batch_size=16, 
-                results_save_path="tl_classification_results.json"):
+                results_save_path="tl_classification_results.json", device=None):
     """
     Args:
         test_signals: List of signal arrays for classification
@@ -861,7 +881,8 @@ def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
     """
     from torch.utils.data import TensorDataset
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     
     print(f"🔧 Transfer Learning Activity")
