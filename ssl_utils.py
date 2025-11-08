@@ -1138,12 +1138,11 @@ def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
     print(f"📊 Plot saved: {plot_filename}")
     
     return results
-
+#reference ssl-wearables/mtl.py
 def train_mtl_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=32,
                   model_name="mtl_ssl_model", config_path="config.json", device=None):
     import sys
-    sys.path.insert(0, 'ssl-wearables')
-    from ssl-wearables.sslearning.models.accNet import Resnet
+    from sslearning_uk.models.accNet import Resnet
     
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
@@ -1194,7 +1193,7 @@ def train_mtl_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_s
     print(f"Training: {epochs} epochs, batch size {batch_size}, lr {learning_rate}")
     
     model.train()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate  , amsgrad=True)
     criterion = nn.CrossEntropyLoss()
     
     training_losses = []
