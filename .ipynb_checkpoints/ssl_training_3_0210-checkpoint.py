@@ -2,16 +2,16 @@ import os
 import pandas as pd
 import numpy as np
 import torch
-from ssl_utils import train_ssl
+from ssl_utils import train_ssl, set_random_seed
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') 
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu') 
 # option: cuda:0 cuda:1 cuda:2
 print(f'total GPU count: {torch.cuda.device_count()}')
 print(f'current working GPU index: {device.index}')
 
-
+set_random_seed()
 class SMCDataProcessor:
     def __init__(self, base_directory):
         self.base_directory = base_directory
@@ -232,7 +232,7 @@ def main():
     
     tasks = {
 
-        'Task3-epoch2000': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'watch_only'}
+        'TaskN2-epoch1000': {'features': ['SpO2', 'DC_R', 'acc_power'], 'data': 'labeled'}
       
     }
     
@@ -243,6 +243,8 @@ def main():
         
         if config['data'] == 'watch_only':
             combined_data = watch_unlabeled + watch_labeled
+        elif config['data']=='labeled':
+            combined_data=watch_labeled
         else:
             combined_data = watch_unlabeled + watch_labeled + ring_data
         
@@ -264,7 +266,7 @@ def main():
             model_path = train_ssl(
                 signals, 
                 signal_length=1000,
-                epochs=2000,
+                epochs=1000,
                 model_name=task_name,
                 device=device
             )

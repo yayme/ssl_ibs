@@ -229,7 +229,7 @@ def main():
     print(f"Watch unlabeled: {len(watch_unlabeled)} samples")
     print(f"Watch labeled: {len(watch_labeled)} samples")
     
-    config = {'features': ['SpO2', 'DC_R', 'acc_power']}
+    config = {'features': ['SpO2','HR', 'DC_R', 'acc_power']}
     processed_data = processor.preprocess_data(watch_labeled, config['features'])
         
     if len(processed_data) == 0:
@@ -247,7 +247,7 @@ def main():
  
 
     conditions = ['OSA', 'Insomnia', 'COMISA']
-    model_path = "Task3-epoch2000_20251016_221308.pth"
+    model_path = "TaskN1-epoch2000_20251027_081215.pth"
     
     all_results = {}
     
@@ -282,7 +282,7 @@ def main():
             epochs=200,
             learning_rate=1e-3,
             batch_size=16,
-            results_save_path=f"Task3__{condition.lower()}_results_{unique_id}.json",
+            results_save_path=f"200epochdownstream_ TaskN1__{condition.lower()}_results_{unique_id}.json",
             device=device
         )
         

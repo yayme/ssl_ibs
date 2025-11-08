@@ -10,7 +10,21 @@ import json
 from tqdm import tqdm
 import time
 from ssl_new_pipeline import ResNetSSL, train_ssl_multitask, DownstreamClassifier, generate_pretext_labels_and_transform, compute_multitask_loss
+from sklearn.metrics import average_precision_score
+import random
+import os
 
+def set_random_seed(seed: int = 42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":16:8"
+    print(f"[Seed set to {seed}] Random states synchronized.")
 class SignalDataset(Dataset):
     def __init__(self, signals, signal_length, targets=None):
         """
@@ -437,11 +451,13 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     accuracy = accuracy_score(all_targets, all_preds)
     f1 = f1_score(all_targets, all_preds)
     auc = roc_auc_score(all_targets, all_probs)
+    auprc = average_precision_score(all_targets, all_probs)
     
     print(f"\n=== Final Results ===")
     print(f"Accuracy: {accuracy:.4f}")
     print(f"F1 Score: {f1:.4f}")
     print(f"AUC: {auc:.4f}")
+    print(f"AUPRC: {auprc:.4f}")
     
     # Plot results
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
@@ -466,7 +482,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     # ROC curve
     fpr, tpr, _ = roc_curve(all_targets, all_probs)
     # axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}')
-    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}, accuracy= {accuracy:.3f}, f1score= {f1: .3f}')
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}, accuracy= {accuracy:.3f}, f1score= {f1: .3f}, AUPRC={auprc:.3f}')
     axes[1, 0].plot([0, 1], [0, 1], 'k--')
     axes[1, 0].set_title('ROC Curve')
     axes[1, 0].set_xlabel('False Positive Rate')
@@ -491,7 +507,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
     
     plt.tight_layout()
     unique_id = time.strftime("%Y%m%d_%H%M%S")
-    downstream_results_path = f'downstream_results_{unique_id}.png'
+    downstream_results_path = f'{results_save_path[:-5]}_{unique_id}.png'
     plt.savefig(downstream_results_path, dpi=150, bbox_inches='tight')
     plt.show()
     
@@ -500,6 +516,7 @@ def test_ssl(test_signals, signal_length, targets, model_path,
         'accuracy': accuracy,
         'f1_score': f1,
         'auc': auc,
+        'auprc': auprc,
         'confusion_matrix': cm.tolist(),
         'training_config': {
             'epochs': epochs,

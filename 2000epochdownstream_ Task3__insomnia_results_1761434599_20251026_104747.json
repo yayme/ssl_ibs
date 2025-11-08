@@ -1,0 +1,20 @@
+{
+  "accuracy": 0.8757645259938838,
+  "f1_score": 0.12398921832884097,
+  "auc": 0.6576319784111992,
+  "confusion_matrix": [
+    [
+      2268,
+      152
+    ],
+    [
+      173,
+      23
+    ]
+  ],
+  "training_config": {
+    "epochs": 2000,
+    "learning_rate": 0.001,
+    "batch_size": 16
+  }
+}

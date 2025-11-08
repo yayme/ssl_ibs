@@ -247,7 +247,7 @@ def main():
  
 
     conditions = ['OSA', 'Insomnia']
-    model_path = "Task3-epoch2000_20251016_221308.pth"
+    model_path = "Task3-epoch1000_20251015_030253.pth"
     
     all_results = {}
     
@@ -282,7 +282,7 @@ def main():
             epochs=1000,
             learning_rate=1e-3,
             batch_size=16,
-            results_save_path=f"Total_Task3__{condition.lower()}_results_{unique_id}.json",
+            results_save_path=f"Total_1000epoch_Task3__{condition.lower()}_results_{unique_id}.json",
             device=device
         )
         
