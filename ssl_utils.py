@@ -1138,3 +1138,223 @@ def tl_activity(test_signals, signal_length, targets, pretrained_model_path,
     print(f"📊 Plot saved: {plot_filename}")
     
     return results
+
+def train_mtl_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_size=32,
+                  model_name="mtl_ssl_model", config_path="config.json", device=None):
+    import sys
+    sys.path.insert(0, 'ssl-wearables')
+    from ssl-wearables.sslearning.models.accNet import Resnet
+    
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            config = json.load(f)
+    else:
+        config = {}
+    
+    task_config = {
+        'time_reversal': config.get('time_reversal', True),
+        'scale': config.get('scale', True),
+        'permutation': config.get('permutation', True),
+        'time_warped': config.get('time_warped', True),
+        'positive_ratio': config.get('positive_ratio', 0.5)
+    }
+    
+    first_signal = np.array(signals[0])
+    if first_signal.ndim == 1:
+        n_channels = 1
+    else:
+        n_channels = first_signal.shape[0]
+    
+    print(f"Detected {n_channels} channels")
+    print(f"Target signal length: {signal_length}")
+    print(f"Number of signals: {len(signals)}")
+    
+    dataset = SignalDataset(signals, signal_length)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Training on device: {device}")
+    
+    task_names = ['time_reversal', 'scale', 'permutation', 'time_warped']
+    active_tasks = [task for task in task_names if task_config.get(task, False)]
+    
+    print(f"Active SSL tasks: {active_tasks}")
+    
+    model = Resnet(
+        output_size=2,
+        n_channels=n_channels,
+        resnet_version=18,
+        epoch_len=signal_length // 30,
+        is_mtl=True
+    ).to(device)
+    
+    print(f"Training MTL SSL model with tasks: {active_tasks}")
+    print(f"Dataset: {len(signals)} signals, {n_channels} channels, length {signal_length}")
+    print(f"Training: {epochs} epochs, batch size {batch_size}, lr {learning_rate}")
+    
+    model.train()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+    
+    training_losses = []
+    training_accs = []
+    task_accuracies = {task: [] for task in active_tasks}
+    
+    print("\nStarting MTL SSL Training...")
+    start_time = time.time()
+    
+    for epoch in tqdm(range(epochs), desc="MTL SSL Epochs", unit="epoch"):
+        epoch_loss = 0
+        epoch_acc = 0
+        task_accs = {task: 0 for task in active_tasks}
+        n_batches = 0
+        
+        for batch_signals in dataloader:
+            batch_signals = batch_signals.to(device)
+            
+            labels = []
+            transformed_signals = []
+            
+            for i in range(batch_signals.size(0)):
+                signal = batch_signals[i].cpu().numpy()
+                
+                task_labels = []
+                for task in task_names:
+                    if task_config.get(task, False):
+                        choice = np.random.choice(2, p=[task_config['positive_ratio'], 1 - task_config['positive_ratio']])
+                        task_labels.append(choice)
+                        
+                        if task == 'time_reversal' and choice == 1:
+                            signal = np.flip(signal, axis=-1).copy()
+                        elif task == 'scale' and choice == 1:
+                            signal = signal * np.random.uniform(0.5, 2.0)
+                        elif task == 'permutation' and choice == 1:
+                            n_segments = 5
+                            segment_len = signal.shape[-1] // n_segments
+                            segments = [signal[..., i*segment_len:(i+1)*segment_len] for i in range(n_segments)]
+                            np.random.shuffle(segments)
+                            signal = np.concatenate(segments, axis=-1)
+                        elif task == 'time_warped' and choice == 1:
+                            warp_factor = np.random.uniform(0.8, 1.2)
+                            old_len = signal.shape[-1]
+                            new_len = int(old_len * warp_factor)
+                            signal_tensor = torch.tensor(signal).unsqueeze(0)
+                            warped = torch.nn.functional.interpolate(signal_tensor, size=new_len, mode='linear', align_corners=False)
+                            if new_len > old_len:
+                                signal = warped[0, :, :old_len].numpy()
+                            else:
+                                pad_len = old_len - new_len
+                                signal = torch.nn.functional.pad(warped[0], (0, pad_len)).numpy()
+                    else:
+                        task_labels.append(0)
+                
+                labels.append(task_labels)
+                transformed_signals.append(signal)
+            
+            transformed_signals = torch.tensor(np.array(transformed_signals), dtype=torch.float32).to(device)
+            labels = torch.tensor(np.array(labels), dtype=torch.long).to(device)
+            
+            aot_y_pred, scale_y_pred, permute_y_pred, time_w_h_pred = model(transformed_signals)
+            
+            total_loss = 0
+            total_acc = 0
+            n_active = 0
+            
+            active_task_idx = 0
+            for task in task_names:
+                if task_config.get(task, False):
+                    if task == 'time_reversal':
+                        pred = aot_y_pred
+                    elif task == 'scale':
+                        pred = scale_y_pred
+                    elif task == 'permutation':
+                        pred = permute_y_pred
+                    elif task == 'time_warped':
+                        pred = time_w_h_pred
+                    
+                    task_label = labels[:, active_task_idx]
+                    
+                    loss = criterion(pred, task_label)
+                    acc = (pred.argmax(dim=1) == task_label).float().mean()
+                    
+                    total_loss += loss
+                    total_acc += acc
+                    task_accs[task] += acc.item()
+                    n_active += 1
+                    active_task_idx += 1
+            
+            if n_active > 0:
+                total_loss = total_loss / n_active
+                total_acc = total_acc / n_active
+            
+            optimizer.zero_grad()
+            total_loss.backward()
+            optimizer.step()
+            
+            epoch_loss += total_loss.item()
+            epoch_acc += total_acc.item()
+            n_batches += 1
+        
+        epoch_loss /= n_batches
+        epoch_acc /= n_batches
+        
+        training_losses.append(epoch_loss)
+        training_accs.append(epoch_acc)
+        
+        for task in active_tasks:
+            task_accuracies[task].append(task_accs[task] / n_batches)
+    
+    total_time = time.time() - start_time
+    print(f"\nMTL SSL Training Complete! Total time: {total_time:.1f}s")
+    print(f"Final metrics: Loss={training_losses[-1]:.4f}, Acc={training_accs[-1]:.4f}")
+    
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    plot_ssl_training_progress(training_losses, training_accs, task_accuracies, active_tasks, model_name, timestamp)
+    
+    timestamped_path = f"{model_name}_{timestamp}.pth"
+    
+    torch.save({
+        'model_state_dict': model.state_dict(),
+        'model_config': {
+            'n_channels': n_channels,
+            'tasks': active_tasks,
+            'signal_length': signal_length,
+            'resnet_version': 18,
+            'epoch_len': signal_length // 30
+        },
+        'training_config': {
+            'epochs': epochs,
+            'learning_rate': learning_rate,
+            'batch_size': batch_size
+        },
+        'timestamp': timestamp,
+        'training_date': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }, timestamped_path)
+    
+    print(f"MTL SSL model saved to: {timestamped_path}")
+    
+    plt.figure(figsize=(12, 4))
+    
+    plt.subplot(1, 2, 1)
+    plt.plot(training_losses)
+    plt.title('MTL SSL Training Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.grid(True)
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(training_accs)
+    plt.title('MTL SSL Training Accuracy')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.grid(True)
+    
+    plt.tight_layout()
+    ssl_training_curves_path = f'{model_name}_mtl_ssl_training_curves_{timestamp}.png'
+    plt.savefig(ssl_training_curves_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    return timestamped_path
