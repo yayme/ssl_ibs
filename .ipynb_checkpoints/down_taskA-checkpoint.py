@@ -1,21 +1,18 @@
 import os
-import sys
-
-
 import pandas as pd
 import numpy as np
 import torch
-from ssl_utils import train_mtl_ssl, set_random_seed
+from ssl_utils import test_ssl,set_random_seed
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
-
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-print(f'total GPU count: {torch.cuda.device_count()}')
-if torch.cuda.is_available():
-    print(f'current working GPU index: {device.index}')
-
 set_random_seed()
-#samsung dataset loading
+
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') 
+# option: cuda:0 cuda:1 cuda:2
+print(f'total GPU count: {torch.cuda.device_count()}')
+print(f'current working GPU index: {device.index}')
+
+
 class SMCDataProcessor:
     def __init__(self, base_directory):
         self.base_directory = base_directory
@@ -216,13 +213,13 @@ class SMCDataProcessor:
                     processed_segments.append((multi_channel_segment, f"{patient_id}_seg{i}"))
         
         return processed_segments
-
 def main():
-    base_directory = r"SMC_WatchSpO2_deliverable_250918/SMC_WatchSpO2_deliverable_241226"
+    # base_directory = r"C:\Users\PC\ssl\ssl_new\SMC_WatchSpO2_deliverable_250918\SMC_WatchSpO2_deliverable_241226"
+    base_directory=r"SMC_WatchSpO2_deliverable_250918/SMC_WatchSpO2_deliverable_241226"
 
     processor = SMCDataProcessor(base_directory)
     
-    print("=== SMC MTL SSL Training Pipeline ===")
+    print("=== SMC SSL Training Pipeline ===")
     
     print("\n1. Loading data...")
     ring_data = processor.load_ring_data(['rk4', 'rs4', 'rw2', 'rw3', 'rw4'])
@@ -232,62 +229,71 @@ def main():
     print(f"Ring data: {len(ring_data)} samples")
     print(f"Watch unlabeled: {len(watch_unlabeled)} samples")
     print(f"Watch labeled: {len(watch_labeled)} samples")
-    #task names 
-    tasks = {
-        'TaskA': {'features': ['SpO2','HR', 'DC_R', 'acc_power'], 'data': 'labeled'}
-    }
     
-    results = {}
+    config = {'features': ['SpO2','DC_R', 'acc_power']}
+    processed_data = processor.preprocess_data(watch_labeled, config['features'])
+        
+    if len(processed_data) == 0:
+        print("No valid data found")
+        return
+        
+    print(f"Processed segments: {len(processed_data)}")
+    ahi_df = pd.read_csv('patient_ahi_isi.csv')
+    print(f"AHI data loaded: {len(ahi_df)} patients")
+
+    ahi_df['OSA'] = (ahi_df['AHI'] >= 15).astype(int)
+    ahi_df['Insomnia'] = (ahi_df['ISI'] >= 15).astype(int)
+    # ahi_df['COMISA'] = ((ahi_df['AHI'] >= 15) & (ahi_df['ISI'] >= 15)).astype(int)
+
+ 
+
+    conditions = ['OSA', 'Insomnia']
+    model_path = "TaskA_20251109_043853.pth"
     
-    for task_name, config in tasks.items():
-        print(f"\n=== {task_name}: {config['features']} ===")
+    all_results = {}
+    
+    for condition in conditions:
+        print(f"\nTesting {condition}...")
         
-        if config['data'] == 'watch_only':
-            combined_data = watch_unlabeled + watch_labeled
-        elif config['data']=='labeled':
-            combined_data=watch_labeled
-        else:
-            combined_data = watch_unlabeled + watch_labeled + ring_data
+        downstream_signals = []
+        downstream_targets = []
         
-        processed_data = processor.preprocess_data(combined_data, config['features'])
+        for signal, patient_name in processed_data:
+            if '_seg' in patient_name:
+                patient_id = patient_name.split('_seg')[0]
+            else:
+                patient_id = patient_name
+            
+            patient_row = ahi_df[ahi_df['ID'] == patient_id]
+            if not patient_row.empty:
+                downstream_signals.append(signal)
+                downstream_targets.append(patient_row[condition].iloc[0])
         
-        if len(processed_data) == 0:
-            print(f"No valid data for {task_name}")
+        if len(downstream_signals) == 0:
+            print(f"No data for {condition}")
             continue
-            
-        print(f"Processed segments: {len(processed_data)}")
         
-        signals = [signal for signal, _ in processed_data]
-        input_dim = len(config['features'])
+        import time
+        unique_id = int(time.time())
+        results = test_ssl(
+            test_signals=downstream_signals,
+            signal_length=1000,
+            targets=downstream_targets,
+            model_path=model_path,
+            epochs=2000,
+            learning_rate=1e-3,
+            batch_size=16,
+            results_save_path=f"TOTALdown1000epoch_TaskN2__Total{condition.lower()}_results_{unique_id}.json",
+            device=device
+        )
         
-        print(f"Input dimensions: {input_dim}")
-        print(f"Signal shape: {signals[0].shape}")
-        #changed to train_mtl_ssl
-        try:
-            model_path = train_mtl_ssl(
-                signals, 
-                signal_length=1000,
-                epochs=1000,
-                model_name=task_name,
-                device=device,
-                option=1
-            )
-            
-            results[task_name] = {
-                'model_path': model_path,
-                'num_segments': len(processed_data),
-                'input_dim': input_dim
-            }
-            
-            print(f"{task_name} completed successfully")
-            
-        except Exception as e:
-            print(f"Error training {task_name}: {e}")
-            continue
+        all_results[condition] = results
+        print(f"{condition} - Acc: {results['accuracy']:.3f}, AUC: {results['auc']:.3f}")
     
-    print(f"\n=== Training Summary ===")
-    for task_name, result in results.items():
-        print(f"{task_name}: {result['num_segments']} segments, {result['input_dim']}D input, model saved to: {result['model_path']}")
+    print("\nFinal Results:")
+    for condition, results in all_results.items():
+        print(f"{condition}: Acc={results['accuracy']:.3f}, F1={results['f1_score']:.3f}, AUC={results['auc']:.3f}")
+        
 
 if __name__ == "__main__":
     main()

@@ -9,7 +9,7 @@ from ssl_utils import train_mtl_ssl, set_random_seed
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
 print(f'total GPU count: {torch.cuda.device_count()}')
 if torch.cuda.is_available():
     print(f'current working GPU index: {device.index}')
@@ -234,7 +234,7 @@ def main():
     print(f"Watch labeled: {len(watch_labeled)} samples")
     #task names 
     tasks = {
-        'TaskA': {'features': ['SpO2','HR', 'DC_R', 'acc_power'], 'data': 'labeled'}
+        'TaskE': {'features': ['SpO2','HR', 'DC_R'], 'data': 'watch_only'}
     }
     
     results = {}
@@ -243,11 +243,11 @@ def main():
         print(f"\n=== {task_name}: {config['features']} ===")
         
         if config['data'] == 'watch_only':
-            combined_data = watch_unlabeled + watch_labeled
+            combined_data = watch_unlabeled 
         elif config['data']=='labeled':
             combined_data=watch_labeled
         else:
-            combined_data = watch_unlabeled + watch_labeled + ring_data
+            combined_data = watch_unlabeled  + ring_data
         
         processed_data = processor.preprocess_data(combined_data, config['features'])
         
