@@ -1358,3 +1358,433 @@ def train_mtl_ssl(signals, signal_length, epochs=50, learning_rate=1e-4, batch_s
     plt.show()
     
     return timestamped_path
+
+def test_mtl_ssl(test_signals, signal_length, targets, model_path, 
+                 epochs=30, learning_rate=1e-3, batch_size=32,
+                 results_save_path="downstream_results.json", device=None):
+
+    from sslearning_uk.models.accNet import Resnet
+    
+    print(f"Loading MTL SSL model from: {model_path}")
+    
+
+    
+    checkpoint = torch.load(model_path, map_location=device)
+    model_config = checkpoint['model_config']
+    
+    ssl_model = Resnet(
+        output_size=2,
+        n_channels=model_config['n_channels'],
+        resnet_version=model_config['resnet_version'],
+        epoch_len=model_config['epoch_len'],
+        is_mtl=True
+    )
+    ssl_model.load_state_dict(checkpoint['model_state_dict'])
+    
+    print(f"Loaded model with {model_config['n_channels']} channels and tasks: {model_config['tasks']}")
+    print(f"Dataset: {len(test_signals)} signals, target length: {signal_length}")
+    
+    train_size = int(0.8 * len(test_signals))
+    train_signals = test_signals[:train_size]
+    train_targets = targets[:train_size]
+    val_signals = test_signals[train_size:]
+    val_targets = targets[train_size:]
+    
+    train_dataset = SignalDataset(train_signals, signal_length, train_targets)
+    val_dataset = SignalDataset(val_signals, signal_length, val_targets)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    ssl_model = ssl_model.to(device)
+    feature_extractor = ssl_model.feature_extractor
+    for param in feature_extractor.parameters():
+        param.requires_grad = False
+    
+    with torch.no_grad():
+        test_input = torch.randn(1, model_config['n_channels'], signal_length).to(device)
+        test_features = feature_extractor(test_input)
+        feature_size = test_features.view(1, -1).shape[1]
+    
+    print(f"Feature extractor output size: {feature_size}")
+    classifier = nn.Linear(feature_size, 2).to(device)
+    
+    optimizer = optim.Adam(classifier.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+    
+    train_losses = []
+    train_accs = []
+    val_losses = []
+    val_accs = []
+    
+    print(f"\nStarting downstream fine-tuning...")
+    print(f"Train: {len(train_signals)} samples, Val: {len(val_signals)} samples")
+    print(f"Training: {epochs} epochs, lr {learning_rate}")
+    
+    start_time = time.time()
+    
+    for epoch in tqdm(range(epochs), desc="Fine-tuning", unit="epoch"):
+        ssl_model.eval()
+        classifier.train()
+        train_loss = 0
+        train_acc = 0
+        
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            
+            with torch.no_grad():
+                features = feature_extractor(x)
+            features = features.view(x.shape[0], -1)
+            outputs = classifier(features)
+            loss = criterion(outputs, y)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            train_acc += (outputs.argmax(1) == y).float().mean().item()
+        
+        train_loss /= len(train_loader)
+        train_acc /= len(train_loader)
+        
+        classifier.eval()
+        val_loss = 0
+        val_acc = 0
+        
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                features = feature_extractor(x)
+                features = features.view(x.shape[0], -1)
+                outputs = classifier(features)
+                loss = criterion(outputs, y)
+                val_loss += loss.item()
+                val_acc += (outputs.argmax(1) == y).float().mean().item()
+        
+        val_loss /= len(val_loader)
+        val_acc /= len(val_loader)
+        
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
+    
+    total_time = time.time() - start_time
+    print(f"\nFine-tuning Complete! Total time: {total_time:.1f}s")
+    
+    classifier.eval()
+    all_preds = []
+    all_probs = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            features = feature_extractor(x)
+            features = features.view(x.shape[0], -1)
+            outputs = classifier(features)
+            probs = torch.softmax(outputs, dim=1)
+            preds = outputs.argmax(1)
+            
+            all_preds.extend(preds.cpu().numpy())
+            all_probs.extend(probs[:, 1].cpu().numpy())
+            all_targets.extend(y.cpu().numpy())
+    
+    accuracy = accuracy_score(all_targets, all_preds)
+    f1 = f1_score(all_targets, all_preds)
+    auc = roc_auc_score(all_targets, all_probs)
+    auprc = average_precision_score(all_targets, all_probs)
+    
+    print(f"\n=== Final Results ===")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"AUC: {auc:.4f}")
+    print(f"AUPRC: {auprc:.4f}")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    axes[0, 0].plot(train_losses, label='Train')
+    axes[0, 0].plot(val_losses, label='Validation')
+    axes[0, 0].set_title('Loss Curves')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
+    
+    axes[0, 1].plot(train_accs, label='Train')
+    axes[0, 1].plot(val_accs, label='Validation')
+    axes[0, 1].set_title('Accuracy Curves')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    
+    fpr, tpr, _ = roc_curve(all_targets, all_probs)
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}, accuracy= {accuracy:.3f}, f1score= {f1: .3f}, AUPRC={auprc:.3f}')
+    axes[1, 0].plot([0, 1], [0, 1], 'k--')
+    axes[1, 0].set_title('ROC Curve')
+    axes[1, 0].set_xlabel('False Positive Rate')
+    axes[1, 0].set_ylabel('True Positive Rate')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    
+    cm = confusion_matrix(all_targets, all_preds)
+    im = axes[1, 1].imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    axes[1, 1].set_title('Confusion Matrix')
+    axes[1, 1].set_xlabel('Predicted Label')
+    axes[1, 1].set_ylabel('True Label')
+    
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            axes[1, 1].text(j, i, format(cm[i, j], 'd'),
+                           ha="center", va="center",
+                           color="white" if cm[i, j] > thresh else "black")
+    
+    plt.tight_layout()
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    downstream_results_path = f'{results_save_path[:-5]}_{unique_id}.png'
+    plt.savefig(downstream_results_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    results = {
+        'accuracy': accuracy,
+        'f1_score': f1,
+        'auc': auc,
+        'auprc': auprc,
+        'confusion_matrix': cm.tolist(),
+        'training_config': {
+            'epochs': epochs,
+            'learning_rate': learning_rate,
+            'batch_size': batch_size
+        }
+    }
+    
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    results_save_path_unique = results_save_path.replace('.json', f'_{unique_id}.json')
+    with open(results_save_path_unique, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"Results saved to: {results_save_path_unique}")
+    return results
+
+    
+def full_test_mtl(test_signals, signal_length, targets, model_path, 
+                  epochs=30, learning_rate=1e-3, batch_size=32,
+                  results_save_path="downstream_results.json", device=None, model_input_length=1000):
+
+    from sslearning_uk.models.accNet import Resnet
+    
+    print(f"Loading MTL SSL model from: {model_path}")
+    
+    checkpoint = torch.load(model_path, map_location=device)
+    model_config = checkpoint['model_config']
+    
+    ssl_model = Resnet(
+        output_size=2,
+        n_channels=model_config['n_channels'],
+        resnet_version=model_config['resnet_version'],
+        epoch_len=model_config['epoch_len'],
+        is_mtl=True
+    )
+    ssl_model.load_state_dict(checkpoint['model_state_dict'])
+    
+    print(f"Loaded model with {model_config['n_channels']} channels and tasks: {model_config['tasks']}")
+    print(f"Dataset: {len(test_signals)} signals, signal length: {signal_length}, model input length: {model_input_length}")
+    
+    train_size = int(0.8 * len(test_signals))
+    train_signals = test_signals[:train_size]
+    train_targets = targets[:train_size]
+    val_signals = test_signals[train_size:]
+    val_targets = targets[train_size:]
+    
+    train_dataset = SignalDataset(train_signals, signal_length, train_targets)
+    val_dataset = SignalDataset(val_signals, signal_length, val_targets)
+    
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    
+    ssl_model = ssl_model.to(device)
+    feature_extractor = ssl_model.feature_extractor
+    for param in feature_extractor.parameters():
+        param.requires_grad = False
+    
+    length_adapter = nn.Linear(signal_length, model_input_length).to(device)
+    
+    with torch.no_grad():
+        test_input = torch.randn(1, model_config['n_channels'], model_input_length).to(device)
+        test_features = feature_extractor(test_input)
+        feature_size = test_features.view(1, -1).shape[1]
+    
+    print(f"Length adapter: {signal_length} -> {model_input_length}")
+    print(f"Feature extractor output size: {feature_size}")
+    classifier = nn.Linear(feature_size, 2).to(device)
+    
+    trainable_params = list(length_adapter.parameters()) + list(classifier.parameters())
+    optimizer = optim.Adam(trainable_params, lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+    
+    train_losses = []
+    train_accs = []
+    val_losses = []
+    val_accs = []
+    
+    print(f"\nStarting downstream fine-tuning...")
+    print(f"Train: {len(train_signals)} samples, Val: {len(val_signals)} samples")
+    print(f"Training: {epochs} epochs, lr {learning_rate}")
+    
+    start_time = time.time()
+    
+    for epoch in tqdm(range(epochs), desc="Fine-tuning", unit="epoch"):
+        ssl_model.eval()
+        length_adapter.train()
+        classifier.train()
+        train_loss = 0
+        train_acc = 0
+        
+        for x, y in train_loader:
+            x, y = x.to(device), y.to(device)
+            
+            x_adapted = length_adapter(x.transpose(1, 2)).transpose(1, 2)
+            
+            with torch.no_grad():
+                features = feature_extractor(x_adapted)
+            features = features.view(x.shape[0], -1)
+            outputs = classifier(features)
+            loss = criterion(outputs, y)
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            train_acc += (outputs.argmax(1) == y).float().mean().item()
+        
+        train_loss /= len(train_loader)
+        train_acc /= len(train_loader)
+        
+        length_adapter.eval()
+        classifier.eval()
+        val_loss = 0
+        val_acc = 0
+        
+        with torch.no_grad():
+            for x, y in val_loader:
+                x, y = x.to(device), y.to(device)
+                x_adapted = length_adapter(x.transpose(1, 2)).transpose(1, 2)
+                features = feature_extractor(x_adapted)
+                features = features.view(x.shape[0], -1)
+                outputs = classifier(features)
+                loss = criterion(outputs, y)
+                val_loss += loss.item()
+                val_acc += (outputs.argmax(1) == y).float().mean().item()
+        
+        val_loss /= len(val_loader)
+        val_acc /= len(val_loader)
+        
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        val_losses.append(val_loss)
+        val_accs.append(val_acc)
+    
+    total_time = time.time() - start_time
+    print(f"\nFine-tuning Complete! Total time: {total_time:.1f}s")
+    
+    length_adapter.eval()
+    classifier.eval()
+    all_preds = []
+    all_probs = []
+    all_targets = []
+    
+    with torch.no_grad():
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            x_adapted = length_adapter(x.transpose(1, 2)).transpose(1, 2)
+            features = feature_extractor(x_adapted)
+            features = features.view(x.shape[0], -1)
+            outputs = classifier(features)
+            probs = torch.softmax(outputs, dim=1)
+            preds = outputs.argmax(1)
+            
+            all_preds.extend(preds.cpu().numpy())
+            all_probs.extend(probs[:, 1].cpu().numpy())
+            all_targets.extend(y.cpu().numpy())
+    
+    accuracy = accuracy_score(all_targets, all_preds)
+    f1 = f1_score(all_targets, all_preds)
+    auc = roc_auc_score(all_targets, all_probs)
+    auprc = average_precision_score(all_targets, all_probs)
+    
+    print(f"\n=== Final Results ===")
+    print(f"Accuracy: {accuracy:.4f}")
+    print(f"F1 Score: {f1:.4f}")
+    print(f"AUC: {auc:.4f}")
+    print(f"AUPRC: {auprc:.4f}")
+    
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    
+    axes[0, 0].plot(train_losses, label='Train')
+    axes[0, 0].plot(val_losses, label='Validation')
+    axes[0, 0].set_title('Loss Curves')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True)
+    
+    axes[0, 1].plot(train_accs, label='Train')
+    axes[0, 1].plot(val_accs, label='Validation')
+    axes[0, 1].set_title('Accuracy Curves')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True)
+    
+    fpr, tpr, _ = roc_curve(all_targets, all_probs)
+    axes[1, 0].plot(fpr, tpr, label=f'AUC = {auc:.3f}, accuracy= {accuracy:.3f}, f1score= {f1: .3f}, AUPRC={auprc:.3f}')
+    axes[1, 0].plot([0, 1], [0, 1], 'k--')
+    axes[1, 0].set_title('ROC Curve')
+    axes[1, 0].set_xlabel('False Positive Rate')
+    axes[1, 0].set_ylabel('True Positive Rate')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True)
+    
+    cm = confusion_matrix(all_targets, all_preds)
+    im = axes[1, 1].imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
+    axes[1, 1].set_title('Confusion Matrix')
+    axes[1, 1].set_xlabel('Predicted Label')
+    axes[1, 1].set_ylabel('True Label')
+    
+    thresh = cm.max() / 2.
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            axes[1, 1].text(j, i, format(cm[i, j], 'd'),
+                           ha="center", va="center",
+                           color="white" if cm[i, j] > thresh else "black")
+    
+    plt.tight_layout()
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    downstream_results_path = f'{results_save_path[:-5]}_full_{unique_id}.png'
+    plt.savefig(downstream_results_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    
+    results = {
+        'accuracy': accuracy,
+        'f1_score': f1,
+        'auc': auc,
+        'auprc': auprc,
+        'confusion_matrix': cm.tolist(),
+        'training_config': {
+            'epochs': epochs,
+            'learning_rate': learning_rate,
+            'batch_size': batch_size,
+            'signal_length': signal_length,
+            'model_input_length': model_input_length
+        }
+    }
+    
+    unique_id = time.strftime("%Y%m%d_%H%M%S")
+    results_save_path_unique = results_save_path.replace('.json', f'_full_{unique_id}.json')
+    with open(results_save_path_unique, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"Results saved to: {results_save_path_unique}")
+    return results

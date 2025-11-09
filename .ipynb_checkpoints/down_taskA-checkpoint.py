@@ -2,7 +2,7 @@ import os
 import pandas as pd
 import numpy as np
 import torch
-from ssl_utils import test_ssl,set_random_seed
+from ssl_utils import test_mtl_ssl,set_random_seed
 from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 set_random_seed()
@@ -230,7 +230,7 @@ def main():
     print(f"Watch unlabeled: {len(watch_unlabeled)} samples")
     print(f"Watch labeled: {len(watch_labeled)} samples")
     
-    config = {'features': ['SpO2','DC_R', 'acc_power']}
+    config = {'features': ['SpO2','HR','DC_R', 'acc_power']}
     processed_data = processor.preprocess_data(watch_labeled, config['features'])
         
     if len(processed_data) == 0:
@@ -241,13 +241,13 @@ def main():
     ahi_df = pd.read_csv('patient_ahi_isi.csv')
     print(f"AHI data loaded: {len(ahi_df)} patients")
 
-    ahi_df['OSA'] = (ahi_df['AHI'] >= 15).astype(int)
+    # ahi_df['OSA'] = (ahi_df['AHI'] >= 15).astype(int)
     ahi_df['Insomnia'] = (ahi_df['ISI'] >= 15).astype(int)
     # ahi_df['COMISA'] = ((ahi_df['AHI'] >= 15) & (ahi_df['ISI'] >= 15)).astype(int)
 
  
 
-    conditions = ['OSA', 'Insomnia']
+    conditions = ['Insomnia']
     model_path = "TaskA_20251109_043853.pth"
     
     all_results = {}
@@ -275,15 +275,15 @@ def main():
         
         import time
         unique_id = int(time.time())
-        results = test_ssl(
+        results = test_mtl_ssl(
             test_signals=downstream_signals,
             signal_length=1000,
             targets=downstream_targets,
             model_path=model_path,
-            epochs=2000,
+            epochs=1000,
             learning_rate=1e-3,
             batch_size=16,
-            results_save_path=f"TOTALdown1000epoch_TaskN2__Total{condition.lower()}_results_{unique_id}.json",
+            results_save_path=f"TaskA_epoch1000_down1000__Total{condition.lower()}_results_{unique_id}.json",
             device=device
         )
         

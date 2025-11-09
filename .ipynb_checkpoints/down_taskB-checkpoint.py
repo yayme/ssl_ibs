@@ -241,14 +241,14 @@ def main():
     ahi_df = pd.read_csv('patient_ahi_isi.csv')
     print(f"AHI data loaded: {len(ahi_df)} patients")
 
-    # ahi_df['OSA'] = (ahi_df['AHI'] >= 15).astype(int)
+    ahi_df['OSA'] = (ahi_df['AHI'] >= 15).astype(int)
     ahi_df['Insomnia'] = (ahi_df['ISI'] >= 15).astype(int)
     # ahi_df['COMISA'] = ((ahi_df['AHI'] >= 15) & (ahi_df['ISI'] >= 15)).astype(int)
 
  
 
-    conditions = ['Insomnia']
-    model_path = "TaskA_20251109_043853.pth"
+    conditions = ['OSA', 'Insomnia']
+    model_path = "TaskB_20251109_134623.pth"
     
     all_results = {}
     
@@ -283,7 +283,7 @@ def main():
             epochs=1000,
             learning_rate=1e-3,
             batch_size=16,
-            results_save_path=f"TaskA_epoch1000_down1000__Total{condition.lower()}_results_{unique_id}.json",
+            results_save_path=f"TaskB_epoch1000_down1000__Total{condition.lower()}_results_{unique_id}.json",
             device=device
         )
         

@@ -7,7 +7,7 @@ from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 set_random_seed()
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu') 
+device = torch.device('cuda:2' if torch.cuda.is_available() else 'cpu') 
 # option: cuda:0 cuda:1 cuda:2
 print(f'total GPU count: {torch.cuda.device_count()}')
 print(f'current working GPU index: {device.index}')
@@ -230,7 +230,7 @@ def main():
     print(f"Watch unlabeled: {len(watch_unlabeled)} samples")
     print(f"Watch labeled: {len(watch_labeled)} samples")
     
-    config = {'features': ['SpO2','HR','DC_R', 'acc_power']}
+    config = {'features': ['SpO2','HR', 'acc_power']}
     processed_data = processor.preprocess_data(watch_labeled, config['features'])
         
     if len(processed_data) == 0:
@@ -248,7 +248,7 @@ def main():
  
 
     conditions = ['Insomnia']
-    model_path = "TaskA_20251109_043853.pth"
+    model_path = "TaskG_20251109_092007.pth"
     
     all_results = {}
     
@@ -283,7 +283,7 @@ def main():
             epochs=1000,
             learning_rate=1e-3,
             batch_size=16,
-            results_save_path=f"TaskA_epoch1000_down1000__Total{condition.lower()}_results_{unique_id}.json",
+            results_save_path=f"TaskG_epoch1000_down1000__Total{condition.lower()}_results_{unique_id}.json",
             device=device
         )
         
